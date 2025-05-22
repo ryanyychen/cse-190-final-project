@@ -10,9 +10,12 @@ def save_model(model, model_path):
     """
     torch.save(model.state_dict(), model_path)
     print(f"Model saved to {model_path}")
+
+
 def load_model(model_path):
     """
     Load a trained model from a specified path.
+    
     Parameters:
     - model_path: The file path from where the model will be loaded.
     Returns:
