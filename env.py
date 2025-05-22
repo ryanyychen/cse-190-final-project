@@ -1,5 +1,6 @@
-import gymnasium as gym
 import yaml
+import highway_env
+import gymnasium as gym
 
 def create_env(config_filepath):
     """
@@ -14,6 +15,7 @@ def create_env(config_filepath):
     with open(config_filepath, 'r') as file:
         config = yaml.safe_load(file)
 
+    print(config["env"])
     env = gym.make(config["env"], config=config["config"], render_mode=config["render_mode"])
     env.reset()
     return env
