@@ -15,7 +15,8 @@ def create_env(config_filepath):
     with open(config_filepath, 'r') as file:
         config = yaml.safe_load(file)
 
-    print(config["env"])
+    if (config["render_mode"] == "none"):
+        config["render_mode"] = None
+
     env = gym.make(config["env"], config=config["config"], render_mode=config["render_mode"])
-    env.reset()
     return env
