@@ -1,0 +1,5 @@
+learning_rate: 0.001
+gamma: 0.80
+num_episodes_train: 5000
+num_episodes_eval: 10
+top_k: 5
