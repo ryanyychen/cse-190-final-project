@@ -31,10 +31,11 @@ class REINFORCEAgent:
 
         # Craft action distribution
         mean, log_std = torch.chunk(output, 2, dim=-1)
+        log_std = torch.clamp(log_std, min=-20, max=2)  # Prevent extreme values
         std = log_std.exp()
         distribution = torch.distributions.Normal(mean, std)
 
-        # Select action through sampling
+        # Select action through sampling the distribution
         action = distribution.sample()
         log_prob = distribution.log_prob(action).sum(dim=-1, keepdim=True)
         action = torch.tanh(action)  # Ensure action is in the range [-1, 1]
@@ -42,6 +43,7 @@ class REINFORCEAgent:
         return action.squeeze(), log_prob.squeeze()
     
     def compute_discounted_rewards(self, rewards):
+        # Compute discounted rewards using gamma
         discounted_rewards = []
         G = 0
         for r in reversed(rewards):
@@ -63,6 +65,9 @@ class REINFORCEAgent:
         self.optimizer.zero_grad()
         loss = torch.stack(policy_loss).sum()
         loss.backward()
+
+        # Clip gradients to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1.0)
         self.optimizer.step()
 
     def train(self, env, num_episodes=1000):
@@ -73,7 +78,8 @@ class REINFORCEAgent:
             log_probs = []
             rewards = []
             done = False
-            
+            steps = 0
+
             while not done:
                 # Select action, take action, and record
                 action, log_prob = self.select_action(state)
@@ -82,11 +88,12 @@ class REINFORCEAgent:
                 rewards.append(reward)
                 total_reward += reward
                 state = next_obs
+                steps += 1
             
             # Update policy after each episode
             self.update_policy(rewards, log_probs)
             if (episode + 1) % 100 == 0:
-                tqdm.write(f"Episode {episode + 1}/{num_episodes} | Avg reward: {total_reward/(episode):.2f}")
+                tqdm.write(f"Episode {episode + 1}/{num_episodes} | Avg reward: {total_reward/(episode):.2f} | Steps: {steps}")
         
         print(f"Training completed. Avg reward: {total_reward/num_episodes:.2f}")
     
@@ -108,6 +115,7 @@ class REINFORCEAgent:
             
             all_episodes.append((total_reward, episode))
 
+        # Sort episodes by total reward and select top_k
         sorted_episodes = sorted(all_episodes, key=lambda x: x[0], reverse=True)
         top_episodes = sorted_episodes[:top_k]
 
@@ -117,6 +125,7 @@ class REINFORCEAgent:
             done = False
             while not done:
                 action, _ = self.select_action(state)
+                action = action.detach().numpy()
                 next_state, reward, done, _ = record_env.step(action)
                 state = next_state
             record_env.close()

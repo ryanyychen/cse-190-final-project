@@ -28,6 +28,48 @@ class GymnasiumRenderWrapper:
         # ignore `mode` and just call original render
         return self.env.render()
 
+class EnvWrapper:
+    def __init__(self, env, config={}):
+        self.env = env
+        self.speed_factor = config.get("speed_factor", 0.1)
+        self.steer_factor = config.get("steer_factor", -0.05)
+        self._override_reward()
+    
+    def _override_reward(self):
+        original_reward_fn = self.env._reward
+
+        def custom_reward(action):
+            # Keep original reward logic
+            reward = original_reward_fn(action)
+
+            # Added custom reward logic
+            acc, steer = action
+            vehicle = self.env.vehicle
+            speed = vehicle.speed
+
+            reward += self.speed_factor * speed
+            reward -= self.steer_factor * abs(steer)
+
+            if speed < 0.1:
+                reward -= 0.5
+            
+            # Penalize if off the road, regardless of everything else
+            if not vehicle.on_road:
+                return -5.0
+            
+            return reward
+        
+        self.env._reward = custom_reward
+    
+    def __getattr__(self, attr):
+        return getattr(self.env, attr)
+
+    def reset(self, *args, **kwargs):
+        return self.env.reset(*args, **kwargs)
+    
+    def step(self, action):
+        return self.env.step(action)
+
 def create_env(config_filepath, render_mode=None):
     """
     Create a gym environment based on the provided configuration file.
@@ -62,7 +104,11 @@ def create_env(config_filepath, render_mode=None):
     try:
         env_class = ENV_CLASSES[config["env"]]
         env = env_class(config=config["config"], render_mode=render_mode)
-        wrapped_env = GymnasiumRenderWrapper(env) if render_mode else env
+        wrapped_env = EnvWrapper(
+            env=env,
+            config=config["wrapper_config"] if "wrapper_config" in config else {}
+        )
+        wrapped_env = GymnasiumRenderWrapper(wrapped_env) if render_mode else wrapped_env
         return wrapped_env
     except KeyError:
         raise ValueError(f"Environment {config['env']} is not registered. Please register it before creating the environment.")
