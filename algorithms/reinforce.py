@@ -4,8 +4,9 @@ from tqdm import tqdm
 from gym_recorder import Recorder
 
 class REINFORCEAgent:
-    def __init__(self, state_size, action_size, learning_rate=0.01, gamma=0.95):
+    def __init__(self, state_size, hidden_size, action_size, learning_rate=0.01, gamma=0.95):
         self.state_size = state_size
+        self.hidden_size = hidden_size
         self.action_size = action_size
         self.learning_rate = learning_rate
         self.gamma = gamma
@@ -14,10 +15,9 @@ class REINFORCEAgent:
     def build_model(self):
         # Simple neural network for policy approximation
         model = torch.nn.Sequential(
-            torch.nn.Linear(self.state_size, 24),
+            torch.nn.Linear(self.state_size, self.hidden_size),
             torch.nn.ReLU(),
-            torch.nn.Linear(24, self.action_size),
-            torch.nn.Softmax(dim=-1)
+            torch.nn.Linear(self.hidden_size, self.action_size * 2),
         )
 
         # Optimizer
@@ -25,12 +25,21 @@ class REINFORCEAgent:
         return model, optimizer
     
     def select_action(self, state):
-        # Select action based on distribution
+        # Select action based on distribution given by policy network
         flattened_state = torch.FloatTensor(state).flatten().unsqueeze(0)
-        probs = self.policy(flattened_state)
-        distribution = torch.distributions.Categorical(probs)
+        output = self.policy(flattened_state)
+
+        # Craft action distribution
+        mean, log_std = torch.chunk(output, 2, dim=-1)
+        std = log_std.exp()
+        distribution = torch.distributions.Normal(mean, std)
+
+        # Select action through sampling
         action = distribution.sample()
-        return action.item(), distribution.log_prob(action)
+        log_prob = distribution.log_prob(action).sum(dim=-1, keepdim=True)
+        action = torch.tanh(action)  # Ensure action is in the range [-1, 1]
+
+        return action.squeeze(), log_prob.squeeze()
     
     def compute_discounted_rewards(self, rewards):
         discounted_rewards = []
@@ -52,7 +61,7 @@ class REINFORCEAgent:
         
         # Update the policy
         self.optimizer.zero_grad()
-        loss = torch.cat(policy_loss).sum()
+        loss = torch.stack(policy_loss).sum()
         loss.backward()
         self.optimizer.step()
 
