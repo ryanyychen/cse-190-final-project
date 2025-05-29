@@ -12,6 +12,8 @@ class REINFORCEAgent:
         self.gamma = gamma
         self.model_path=model_path
         self.policy, self.optimizer = self.build_model()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.policy.to(self.device)
 
     def build_model(self):
         # Simple neural network for policy approximation
@@ -26,7 +28,7 @@ class REINFORCEAgent:
         return model, optimizer
     
     def select_action(self, state):
-        flattened_state = torch.FloatTensor(state).flatten().unsqueeze(0)
+        flattened_state = torch.FloatTensor(state).flatten().unsqueeze(0).to(self.device)
         output = self.policy(flattened_state)
 
         mean, log_std = torch.chunk(output, 2, dim=-1)
@@ -53,9 +55,11 @@ class REINFORCEAgent:
         for r in reversed(rewards):
             G = r + self.gamma * G
             discounted_rewards.insert(0, G)
-        return torch.FloatTensor(discounted_rewards)
+        return torch.FloatTensor(discounted_rewards).to(self.device)
     
     def update_policy(self, rewards, log_probs):
+        log_probs = log_probs.to(self.device)
+        
         # Compute the discounted rewards
         discounted_rewards = self.compute_discounted_rewards(rewards)
         
@@ -76,6 +80,7 @@ class REINFORCEAgent:
 
     def train(self, env, num_episodes=1000, print_freq=100, save_freq=100):
         total_reward = 0
+        max_reward = float('-inf')
         for episode in tqdm(range(num_episodes), desc="Training REINFORCE Agent"):
             obs, obs_info = env.reset()
             state = obs
@@ -98,10 +103,15 @@ class REINFORCEAgent:
                 state = next_obs
                 steps += 1
             
+            ep_reward = sum(rewards)
+            if (ep_reward > max_reward):
+                max_reward = ep_reward
+                self.save_model(self.model_path)
+            
             # Update policy after each episode
             self.update_policy(rewards, log_probs)
             if (episode + 1) % print_freq == 0:
-                tqdm.write(f"Episode {episode + 1}/{num_episodes} | Avg reward: {total_reward/(episode):.2f} | Steps: {steps}")
+                tqdm.write(f"Episode {episode + 1}/{num_episodes} | Max reward: {max_reward:.2f} | Avg reward: {total_reward/(episode):.2f}")
 
             if (episode + 1) % save_freq == 0:
                 self.save_model(f"{self.model_path[:-4]}_ep{episode+1}.pth")
