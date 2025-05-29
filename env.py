@@ -35,6 +35,8 @@ class EnvWrapper:
         self.steer_factor = config.get("steer_factor", 0)
         self.onroad_reward = config.get("onroad_reward", 0)
         self.offroad_penalty = config.get("offroad_penalty", 0)
+        self.collision_terminal = config.get("collision_terminal", False)
+        self.offroad_terminal = config.get("offroad_terminal", False)
         self._override_reward()
     
     def _override_reward(self):
@@ -49,16 +51,16 @@ class EnvWrapper:
             speed = vehicle.speed
             acc, steer = action
 
-            # Reward for speed
-            reward += self.speed_factor * speed
+            # Penalize for speed over 5
+            reward -= self.speed_factor * max(0, speed - 5)
 
             # Penalize for excessive steering
             max_steer = self.env.config["vehicle"]["steering"]
             if abs(steer) * max_steer > 0.3:
                 reward -= self.steer_factor * abs(steer)
 
-            if speed < 0.1:
-                reward -= 0.5
+            # if speed < 0.1:
+            #     reward -= 0.5
             
             # Penalize if off the road, regardless of everything else
             if not vehicle.on_road:
@@ -66,7 +68,7 @@ class EnvWrapper:
                     return self.offroad_penalty
             else:
                 reward += self.onroad_reward
-            
+
             return reward
         
         self.env._reward = custom_reward
@@ -78,7 +80,12 @@ class EnvWrapper:
         return self.env.reset(*args, **kwargs)
     
     def step(self, action):
-        return self.env.step(action)
+        obs, obs_info, reward, done, info = self.env.step(action)
+        if self.offroad_terminal and not self.env.vehicle.on_road:
+            done = True
+        if self.collision_terminal and self.env.vehicle.crashed:
+            done = True
+        return obs, obs_info, reward, done, info
 
 def create_env(config_filepath, render_mode=None):
     """

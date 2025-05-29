@@ -4,12 +4,13 @@ from tqdm import tqdm
 from gym_recorder import Recorder
 
 class REINFORCEAgent:
-    def __init__(self, state_size, hidden_size, action_size, learning_rate=0.01, gamma=0.95):
+    def __init__(self, state_size, hidden_size, action_size, learning_rate=0.01, gamma=0.95, model_path="models/reinforce.pth"):
         self.state_size = state_size
         self.hidden_size = hidden_size
         self.action_size = action_size
         self.learning_rate = learning_rate
         self.gamma = gamma
+        self.model_path=model_path
         self.policy, self.optimizer = self.build_model()
 
     def build_model(self):
@@ -25,20 +26,23 @@ class REINFORCEAgent:
         return model, optimizer
     
     def select_action(self, state):
-        # Select action based on distribution given by policy network
         flattened_state = torch.FloatTensor(state).flatten().unsqueeze(0)
         output = self.policy(flattened_state)
 
-        # Craft action distribution
         mean, log_std = torch.chunk(output, 2, dim=-1)
-        log_std = torch.clamp(log_std, min=-20, max=2)  # Prevent extreme values
+        log_std = torch.clamp(log_std, min=-20, max=2)
+
+        # Replace NaNs while keeping computation in autograd graph
+        nan_mask = torch.isnan(mean) | torch.isnan(log_std)
+        mean = torch.where(nan_mask, torch.zeros_like(mean), mean)
+        log_std = torch.where(nan_mask, torch.full_like(log_std, -4.0), log_std)  # std = exp(-4) ~ 0.018
+
         std = log_std.exp()
         distribution = torch.distributions.Normal(mean, std)
 
-        # Select action through sampling the distribution
-        action = distribution.sample()
+        action = distribution.rsample()  # allows gradients through the sample
         log_prob = distribution.log_prob(action).sum(dim=-1, keepdim=True)
-        action = torch.tanh(action)  # Ensure action is in the range [-1, 1]
+        action = torch.tanh(action)
 
         return action.squeeze(), log_prob.squeeze()
     
@@ -83,6 +87,10 @@ class REINFORCEAgent:
             while not done:
                 # Select action, take action, and record
                 action, log_prob = self.select_action(state)
+                # Scale action to range of environment's action space
+                action = action.detach().numpy()
+                action = action * [env.config["vehicle"]["acceleration"], env.config["vehicle"]["steering"]]
+
                 next_obs, obs_info, reward, done, _ = env.step(action)
                 log_probs.append(log_prob)
                 rewards.append(reward)
@@ -96,7 +104,7 @@ class REINFORCEAgent:
                 tqdm.write(f"Episode {episode + 1}/{num_episodes} | Avg reward: {total_reward/(episode):.2f} | Steps: {steps}")
 
             if (episode + 1) % save_freq == 0:
-                self.save_model(f"models/reinforce_ep{episode+1}.pth")
+                self.save_model(f"{self.model_path[:-4]}_ep{episode+1}.pth")
         
         print(f"Training completed. Avg reward: {total_reward/num_episodes:.2f}")
     
@@ -112,6 +120,10 @@ class REINFORCEAgent:
 
             while not done:
                 action, _ = self.select_action(state)
+                action = action.detach().numpy()
+                # Scale action to range of environment's action space
+                action = action * [env.config["vehicle"]["acceleration"], env.config["vehicle"]["steering"]]
+
                 next_state, reward, done, _ = env.step(action)
                 total_reward += reward
                 state = next_state
@@ -129,6 +141,9 @@ class REINFORCEAgent:
             while not done:
                 action, _ = self.select_action(state)
                 action = action.detach().numpy()
+                # Scale action to range of environment's action space
+                action = action * [env.config["vehicle"]["acceleration"], env.config["vehicle"]["steering"]]
+
                 next_state, reward, done, _ = record_env.step(action)
                 state = next_state
             record_env.close()
