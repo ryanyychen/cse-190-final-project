@@ -31,8 +31,10 @@ class GymnasiumRenderWrapper:
 class EnvWrapper:
     def __init__(self, env, config={}):
         self.env = env
-        self.speed_factor = config.get("speed_factor", 0.1)
-        self.steer_factor = config.get("steer_factor", -0.05)
+        self.speed_factor = config.get("speed_factor", 0)
+        self.steer_factor = config.get("steer_factor", 0)
+        self.onroad_reward = config.get("onroad_reward", 0)
+        self.offroad_penalty = config.get("offroad_penalty", 0)
         self._override_reward()
     
     def _override_reward(self):
@@ -43,19 +45,27 @@ class EnvWrapper:
             reward = original_reward_fn(action)
 
             # Added custom reward logic
-            acc, steer = action
             vehicle = self.env.vehicle
             speed = vehicle.speed
+            acc, steer = action
 
+            # Reward for speed
             reward += self.speed_factor * speed
-            reward -= self.steer_factor * abs(steer)
+
+            # Penalize for excessive steering
+            max_steer = self.env.config["vehicle"]["steering"]
+            if abs(steer) * max_steer > 0.3:
+                reward -= self.steer_factor * abs(steer)
 
             if speed < 0.1:
                 reward -= 0.5
             
             # Penalize if off the road, regardless of everything else
             if not vehicle.on_road:
-                return -5.0
+                if self.offroad_penalty < 0:
+                    return self.offroad_penalty
+            else:
+                reward += self.onroad_reward
             
             return reward
         

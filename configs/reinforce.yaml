@@ -1,6 +1,8 @@
 hidden_size: 64
 learning_rate: 0.001
 gamma: 0.80
-num_episodes_train: 1000
+num_episodes_train: 500
+print_freq: 20
+save_freq: 50
 num_episodes_eval: 10
-top_k: 5
+top_k: 2

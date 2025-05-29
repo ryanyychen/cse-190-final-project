@@ -70,7 +70,7 @@ class REINFORCEAgent:
         torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=1.0)
         self.optimizer.step()
 
-    def train(self, env, num_episodes=1000):
+    def train(self, env, num_episodes=1000, print_freq=100, save_freq=100):
         total_reward = 0
         for episode in tqdm(range(num_episodes), desc="Training REINFORCE Agent"):
             obs, obs_info = env.reset()
@@ -92,8 +92,11 @@ class REINFORCEAgent:
             
             # Update policy after each episode
             self.update_policy(rewards, log_probs)
-            if (episode + 1) % 100 == 0:
+            if (episode + 1) % print_freq == 0:
                 tqdm.write(f"Episode {episode + 1}/{num_episodes} | Avg reward: {total_reward/(episode):.2f} | Steps: {steps}")
+
+            if (episode + 1) % save_freq == 0:
+                self.save_model(f"models/reinforce_ep{episode+1}.pth")
         
         print(f"Training completed. Avg reward: {total_reward/num_episodes:.2f}")
     
