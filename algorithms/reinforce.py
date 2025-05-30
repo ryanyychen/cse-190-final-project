@@ -58,8 +58,6 @@ class REINFORCEAgent:
         return torch.FloatTensor(discounted_rewards).to(self.device)
     
     def update_policy(self, rewards, log_probs):
-        log_probs = log_probs.to(self.device)
-        
         # Compute the discounted rewards
         discounted_rewards = self.compute_discounted_rewards(rewards)
         
@@ -106,6 +104,7 @@ class REINFORCEAgent:
             ep_reward = sum(rewards)
             if (ep_reward > max_reward):
                 max_reward = ep_reward
+                print(f"Max reward: {max_reward:.2f} at episode {episode + 1}")
                 self.save_model(self.model_path)
             
             # Update policy after each episode
