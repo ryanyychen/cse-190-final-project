@@ -35,8 +35,10 @@ class EnvWrapper:
         self.speed_factor = config.get("speed_factor", 0)
         self.steer_factor = config.get("steer_factor", 0)
         self.onroad_reward = config.get("onroad_reward", 0)
+        self.progress_reward = config.get("progress_reward", 0)
         self.offroad_penalty = config.get("offroad_penalty", 0)
         self.collision_penalty = config.get("collision_penalty", 0)
+        self.wrongexit_penalty = config.get("wrongexit_penalty", 0)
         self.offroad_terminal = config.get("offroad_terminal", False)
         self.collision_terminal = config.get("collision_terminal", False)
         self._override_reward()
@@ -48,6 +50,11 @@ class EnvWrapper:
             # Keep original reward logic
             reward = original_reward_fn(action)
 
+            # If has_arrived was awarded, check if vehicle arriving at destination
+            if reward == 50:
+                # Lane Index structure: [current_road_id, destination_road_id, lane_index]
+                if self.env.vehicle.lane_index[1] != self.env.config["destination"]:
+                    reward = -self.wrongexit_penalty
             # Added custom reward logic
             vehicle = self.env.vehicle
             speed = vehicle.speed
@@ -76,10 +83,13 @@ class EnvWrapper:
                     reward -= self.collision_penalty
             
             # Reward for heading to destination
-            # Extract destination
-            destination = self.env.config["destination"]
-            if vehicle.lane_index[0] == destination:
-                reward += 5.0
+            destination_index = self.env.config["destination"][-1:]
+            if vehicle.lane_index[0][-1:] == destination_index:
+                reward += self.progress_reward
+            if vehicle.lane_index[1][-1:] == destination_index:
+                reward += self.progress_reward
+            if vehicle.lane_index[0][-1:] == destination_index and vehicle.lane_index[1][-1:] == destination_index:
+                reward += self.progress_reward * 4
 
             return reward
         
@@ -95,8 +105,10 @@ class EnvWrapper:
         obs, obs_info, reward, done, info = self.env.step(action)
         if self.offroad_terminal and not self.env.vehicle.on_road:
             done = True
+            info["terminated_due_to_offroad"] = True
         if self.collision_terminal and self.env.vehicle.crashed:
             done = True
+            info["terminated_due_to_collision"] = True
         return obs, obs_info, reward, done, info
 
 def create_env(config_filepath, render_mode=None):

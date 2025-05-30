@@ -62,7 +62,7 @@ class REINFORCEAgent:
         discounted_rewards = self.compute_discounted_rewards(rewards)
         
         # Normalize the rewards
-        discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (discounted_rewards.std() + 1e-8)
+        discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (discounted_rewards.std(unbiased=False) + 1e-8)
         
         # Compute the policy loss
         policy_loss = [-log_prob * reward for log_prob, reward in zip(log_probs, discounted_rewards)]
@@ -105,7 +105,9 @@ class REINFORCEAgent:
             if (ep_reward > max_reward):
                 max_reward = ep_reward
                 print(f"Max reward: {max_reward:.2f} at episode {episode + 1}")
-                self.save_model(self.model_path)
+                # Only save if training has been going on for a while
+                if (episode + 1) > num_episodes // 3:
+                    self.save_model(self.model_path)
             
             # Update policy after each episode
             self.update_policy(rewards, log_probs)
