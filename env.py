@@ -1,5 +1,6 @@
 import os
 import yaml
+import numpy as np
 from highway_env.envs.merge_env import MergeEnv
 from highway_env.envs.two_way_env import TwoWayEnv
 from highway_env.envs.highway_env import HighwayEnv
@@ -35,8 +36,9 @@ class EnvWrapper:
         self.steer_factor = config.get("steer_factor", 0)
         self.onroad_reward = config.get("onroad_reward", 0)
         self.offroad_penalty = config.get("offroad_penalty", 0)
-        self.collision_terminal = config.get("collision_terminal", False)
+        self.collision_penalty = config.get("collision_penalty", 0)
         self.offroad_terminal = config.get("offroad_terminal", False)
+        self.collision_terminal = config.get("collision_terminal", False)
         self._override_reward()
     
     def _override_reward(self):
@@ -52,22 +54,32 @@ class EnvWrapper:
             acc, steer = action
 
             # Penalize for speed over 5
-            reward -= self.speed_factor * max(0, speed - 5)
+            speed_penalty = self.speed_factor * max(0, speed - 5)
+            reward -= speed_penalty
 
             # Penalize for excessive steering
             max_steer = self.env.config["vehicle"]["steering"]
             if abs(steer) * max_steer > 0.3:
-                reward -= self.steer_factor * abs(steer)
+                steer_penalty = self.steer_factor * abs(steer) * max_steer
+                reward -= steer_penalty
 
-            # if speed < 0.1:
-            #     reward -= 0.5
-            
             # Penalize if off the road, regardless of everything else
             if not vehicle.on_road:
-                if self.offroad_penalty < 0:
-                    return self.offroad_penalty
+                if self.offroad_penalty > 0:
+                    reward -= self.offroad_penalty
             else:
                 reward += self.onroad_reward
+            
+            # Penalize for collision
+            if vehicle.crashed:
+                if self.collision_penalty > 0:
+                    reward -= self.collision_penalty
+            
+            # Reward for heading to destination
+            # Extract destination
+            destination = self.env.config["destination"]
+            if vehicle.lane_index[0] == destination:
+                reward += 5.0
 
             return reward
         
