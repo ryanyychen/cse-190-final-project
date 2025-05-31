@@ -47,10 +47,52 @@ class REINFORCEAgent:
         # Optimizer with better learning rate and weight decay
         optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate, weight_decay=1e-5)
         return model, optimizer
-    
+
+    def get_safety_adjustment(self, state):
+        if not isinstance(state, dict) or 'vehicle_info' not in state:
+            return torch.zeros(self.action_size, device=self.device)
+        
+        vehicle_info = state['vehicle_info']
+        if vehicle_info is None or len(vehicle_info) == 0:
+            return torch.zeros(self.action_size, device=self.device)
+        
+        # Get the closest vehicle in front
+        closest_vehicle = None
+        min_distance = float('inf')
+        for vehicle in vehicle_info:
+            if vehicle['relative_position'][0] > 0:  # Vehicle is in front
+                distance = np.linalg.norm(vehicle['relative_position'])
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_vehicle = vehicle
+        
+        if closest_vehicle is None or min_distance > 5.0:  # No vehicle or too far
+            return torch.zeros(self.action_size, device=self.device)
+        
+        # Create safety adjustment
+        adjustment = torch.zeros(self.action_size, device=self.device)
+        
+        # Scale down acceleration based on distance
+        distance_factor = min_distance / 5.0
+        adjustment[0] = -0.3 * (1.0 - distance_factor)  # Reduce speed
+        
+        # Add steering adjustment
+        if closest_vehicle['relative_position'][1] > 0:  # Vehicle is to the right
+            adjustment[1] = -0.2 * (1.0 - distance_factor)  # Steer left
+        else:  # Vehicle is to the left
+            adjustment[1] = 0.2 * (1.0 - distance_factor)  # Steer right
+        
+        return adjustment
+
     def select_action(self, state):
         # Move state to GPU and ensure it's the right shape
-        flattened_state = torch.FloatTensor(state).flatten().unsqueeze(0).to(self.device)
+        if isinstance(state, dict) and 'state' in state:
+            state = state['state']
+        
+        if len(state.shape) > 1:
+            state = state.flatten()
+        
+        flattened_state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         output = self.policy(flattened_state)
 
         mean, log_std = torch.chunk(output, 2, dim=-1)
@@ -70,32 +112,15 @@ class REINFORCEAgent:
         log_prob = distribution.log_prob(action).sum(dim=-1, keepdim=True)
         action = torch.tanh(action)
 
-        # Check for nearby vehicles and adjust action if necessary
-        if 'vehicle_info' in state:
-            vehicle_info = state['vehicle_info']
-            if vehicle_info is not None and len(vehicle_info) > 0:
-                # Get the closest vehicle in front
-                closest_vehicle = None
-                min_distance = float('inf')
-                for vehicle in vehicle_info:
-                    if vehicle['relative_position'][0] > 0:  # Vehicle is in front
-                        distance = np.linalg.norm(vehicle['relative_position'])
-                        if distance < min_distance:
-                            min_distance = distance
-                            closest_vehicle = vehicle
+        # Get safety adjustment
+        safety_adjustment = self.get_safety_adjustment(state)
+        
+        # Apply safety adjustment without inplace operations
+        final_action = action.squeeze() + safety_adjustment
+        final_action = torch.clamp(final_action, -1.0, 1.0)
 
-                # If there's a vehicle very close, reduce speed
-                if closest_vehicle is not None and min_distance < 5.0:  # 5 meters threshold
-                    # Scale down the acceleration component
-                    action[0] = action[0] * 0.5  # Reduce speed by half
-                    # Add some steering to avoid collision
-                    if closest_vehicle['relative_position'][1] > 0:  # Vehicle is to the right
-                        action[1] = max(action[1], -0.3)  # Steer left
-                    else:  # Vehicle is to the left
-                        action[1] = min(action[1], 0.3)  # Steer right
-
-        # Move action to CPU for environment, but keep log_prob on GPU with gradients
-        return action.squeeze().cpu(), log_prob.squeeze()
+        # Move action to CPU for environment
+        return final_action.cpu(), log_prob.squeeze()
     
     def compute_discounted_rewards(self, rewards):
         # Compute discounted rewards using gamma
