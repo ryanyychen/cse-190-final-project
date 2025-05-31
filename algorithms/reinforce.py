@@ -48,42 +48,6 @@ class REINFORCEAgent:
         optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate, weight_decay=1e-5)
         return model, optimizer
 
-    def get_safety_adjustment(self, state):
-        if not isinstance(state, dict) or 'vehicle_info' not in state:
-            return torch.zeros(self.action_size, device=self.device)
-        
-        vehicle_info = state['vehicle_info']
-        if vehicle_info is None or len(vehicle_info) == 0:
-            return torch.zeros(self.action_size, device=self.device)
-        
-        # Get the closest vehicle in front
-        closest_vehicle = None
-        min_distance = float('inf')
-        for vehicle in vehicle_info:
-            if vehicle['relative_position'][0] > 0:  # Vehicle is in front
-                distance = np.linalg.norm(vehicle['relative_position'])
-                if distance < min_distance:
-                    min_distance = distance
-                    closest_vehicle = vehicle
-        
-        if closest_vehicle is None or min_distance > 5.0:  # No vehicle or too far
-            return torch.zeros(self.action_size, device=self.device)
-        
-        # Create safety adjustment
-        adjustment = torch.zeros(self.action_size, device=self.device)
-        
-        # Scale down acceleration based on distance
-        distance_factor = min_distance / 5.0
-        adjustment[0] = -0.3 * (1.0 - distance_factor)  # Reduce speed
-        
-        # Add steering adjustment
-        if closest_vehicle['relative_position'][1] > 0:  # Vehicle is to the right
-            adjustment[1] = -0.2 * (1.0 - distance_factor)  # Steer left
-        else:  # Vehicle is to the left
-            adjustment[1] = 0.2 * (1.0 - distance_factor)  # Steer right
-        
-        return adjustment
-
     def select_action(self, state):
         # Move state to GPU and ensure it's the right shape
         if isinstance(state, dict) and 'state' in state:
@@ -112,16 +76,9 @@ class REINFORCEAgent:
         log_prob = distribution.log_prob(action).sum(dim=-1, keepdim=True)
         action = torch.tanh(action)
 
-        # Get safety adjustment
-        safety_adjustment = self.get_safety_adjustment(state)
-        
-        # Apply safety adjustment without inplace operations
-        final_action = action.squeeze() + safety_adjustment
-        final_action = torch.clamp(final_action, -1.0, 1.0)
-
         # Move action to CPU for environment
-        return final_action.cpu(), log_prob.squeeze()
-    
+        return action.squeeze().cpu(), log_prob.squeeze()
+
     def compute_discounted_rewards(self, rewards):
         # Compute discounted rewards using gamma
         discounted_rewards = []
@@ -130,9 +87,9 @@ class REINFORCEAgent:
             G = r + self.gamma * G
             discounted_rewards.insert(0, G)
         return torch.FloatTensor(discounted_rewards).to(self.device)
-    
+
     def update_policy(self, rewards, log_probs):
-        # Move log_probs to GPU and ensure gradients are preserved
+        # Move log_probs to GPU
         log_probs = torch.stack(log_probs).to(self.device)
         
         # Compute the discounted rewards
@@ -182,8 +139,6 @@ class REINFORCEAgent:
         no_improvement_count = 0  # Track episodes without improvement
         consistency_window = 100  # Window for calculating recent average
         degradation_threshold = 0.5  # Threshold for detecting performance degradation
-        last_saved_episode = 0  # Track last episode where model was saved
-        last_load_episode = 0  # Track last episode where model was loaded
 
         for episode in tqdm(range(num_episodes), desc="Training REINFORCE Agent"):
             obs, obs_info = env.reset()
@@ -222,11 +177,8 @@ class REINFORCEAgent:
                     prev_avg = sum(rewards_history[-2*consistency_window:-consistency_window]) / consistency_window
                     if recent_avg < prev_avg * degradation_threshold:
                         print(f"Performance degradation detected! Loading previous best model...")
-                        # Only load if we haven't loaded recently
-                        if episode - last_load_episode > 50:
-                            self.load_model(f"{self.model_path[:-4]}_best.pth")
-                            self.entropy_coef *= 1.2  # Increase exploration after degradation
-                            last_load_episode = episode
+                        self.load_model(f"{self.model_path[:-4]}_best.pth")
+                        self.entropy_coef *= 1.2  # Increase exploration after degradation
                 
                 if recent_avg > self.best_recent_avg:
                     self.best_recent_avg = recent_avg
@@ -239,7 +191,6 @@ class REINFORCEAgent:
                 if max_reward > best_reward:
                     best_reward = max_reward
                     self.save_model(f"{self.model_path[:-4]}_best.pth")
-                    last_saved_episode = episode
                     no_improvement_count = 0
             else:
                 no_improvement_count += 1
@@ -264,7 +215,6 @@ class REINFORCEAgent:
 
             if (episode + 1) % save_freq == 0:
                 self.save_model(f"{self.model_path[:-4]}_ep{episode+1}.pth")
-                last_saved_episode = episode
         
         print(f"Training completed. Avg reward: {total_reward/num_episodes:.2f}")
         return rewards_history  # Return training history for plotting
@@ -376,34 +326,10 @@ class REINFORCEAgent:
     def load_model(self, model_path="models/reinforce.pth"):
         if os.path.exists(model_path):
             checkpoint = torch.load(model_path)
-            
-            # Create new model state dict
-            new_state_dict = {}
-            for key, value in checkpoint['model_state_dict'].items():
-                new_state_dict[key] = value.clone().to(self.device)
-            
-            # Load the new state dict
-            self.policy.load_state_dict(new_state_dict)
-            
-            # Create new optimizer state dict
-            new_optimizer_state = {}
-            for key, value in checkpoint['optimizer_state_dict'].items():
-                if isinstance(value, torch.Tensor):
-                    new_optimizer_state[key] = value.clone().to(self.device)
-                else:
-                    new_optimizer_state[key] = value
-            
-            # Create new optimizer and load state
-            self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.learning_rate, weight_decay=1e-5)
-            self.optimizer.load_state_dict(new_optimizer_state)
-            
-            # Load other parameters
+            self.policy.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             self.entropy_coef = checkpoint.get('entropy_coef', 0.05)
             self.reward_history = checkpoint.get('reward_history', [])
-            
-            # Clear any cached tensors
-            torch.cuda.empty_cache()
-            
             print(f"Model loaded from {model_path}")
         else:
             raise FileNotFoundError(f"Model file {model_path} does not exist.")
