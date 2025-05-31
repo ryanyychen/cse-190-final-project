@@ -1,13 +1,13 @@
 import os
 import yaml
 import numpy as np
-from highway_env.envs.merge_env import MergeEnv
-from highway_env.envs.two_way_env import TwoWayEnv
-from highway_env.envs.highway_env import HighwayEnv
-from highway_env.envs.parking_env import ParkingEnv
-from highway_env.envs.racetrack_env import RacetrackEnv
-from highway_env.envs.roundabout_env import RoundaboutEnv
-from highway_env.envs.intersection_env import IntersectionEnv 
+from envs.merge_env import MergeEnv
+from envs.two_way_env import TwoWayEnv
+from envs.highway_env import HighwayEnv
+from envs.parking_env import ParkingEnv
+from envs.racetrack_env import RacetrackEnv
+from envs.roundabout_env import RoundaboutEnv
+from envs.intersection_env import IntersectionEnv 
 
 class GymnasiumRenderWrapper:
     def __init__(self, env):
