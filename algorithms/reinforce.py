@@ -22,6 +22,12 @@ class REINFORCEAgent:
         self.best_recent_avg = float('-inf')  # Track best recent average
         self.consistency_threshold = 0.25  # Target ratio of recent avg to max reward
         self.min_episodes_for_consistency = 100  # Minimum episodes to consider for consistency
+        self.no_improvement_threshold = 150  # Episodes without improvement before increasing exploration
+        self.exploration_boost = 1.2  # Factor to increase exploration
+        self.max_entropy = 0.2  # Cap on maximum entropy coefficient
+        self.min_entropy = 0.01  # Minimum entropy coefficient
+        self.recent_window = 100  # Window size for recent average calculation
+        self.performance_history = []  # Track recent averages for model saving
         self.policy_buffer = []  # Store recent good policies
         self.buffer_size = 5  # Number of policies to keep in buffer
         self.min_reward_for_buffer = 20.0  # Minimum reward to consider for buffer
@@ -70,8 +76,8 @@ class REINFORCEAgent:
         std = log_std.exp()
         distribution = torch.distributions.Normal(mean, std)
 
-        # Add noise for exploration
-        noise = torch.randn_like(mean) * 0.1
+        # Add noise for exploration - more controlled noise scaling
+        noise = torch.randn_like(mean) * (0.1 + self.entropy_coef * 0.1)  # Reduced noise scaling
         action = distribution.rsample() + noise
         log_prob = distribution.log_prob(action).sum(dim=-1, keepdim=True)
         action = torch.tanh(action)
@@ -137,8 +143,9 @@ class REINFORCEAgent:
         best_reward = float('-inf')
         episode_rewards = []  # Track all episode rewards
         no_improvement_count = 0  # Track episodes without improvement
-        consistency_window = 100  # Window for calculating recent average
-        degradation_threshold = 0.5  # Threshold for detecting performance degradation
+        last_improvement_episode = 0  # Track when we last saw improvement
+        consecutive_resets = 0  # Track number of consecutive resets
+        best_recent_avg = float('-inf')  # Track best recent average for model saving
 
         for episode in tqdm(range(num_episodes), desc="Training REINFORCE Agent"):
             obs, obs_info = env.reset()
@@ -149,9 +156,7 @@ class REINFORCEAgent:
             steps = 0
 
             while not done:
-                # Select action, take action, and record
                 action, log_prob = self.select_action(state)
-                # Scale action to range of environment's action space
                 action = action.detach().numpy()
                 action = action * [env.config["vehicle"]["acceleration"], env.config["vehicle"]["steering"]]
 
@@ -167,42 +172,40 @@ class REINFORCEAgent:
             episode_rewards.append(ep_reward)
             
             # Calculate recent average and consistency metrics
-            if len(rewards_history) >= consistency_window:
-                recent_avg = sum(rewards_history[-consistency_window:]) / consistency_window
-                max_recent = max(rewards_history[-consistency_window:])
+            if len(rewards_history) >= self.recent_window:
+                recent_avg = sum(rewards_history[-self.recent_window:]) / self.recent_window
+                max_recent = max(rewards_history[-self.recent_window:])
                 consistency_ratio = recent_avg / max_recent if max_recent > 0 else 0
                 
-                # Check for performance degradation
-                if len(rewards_history) >= consistency_window * 2:
-                    prev_avg = sum(rewards_history[-2*consistency_window:-consistency_window]) / consistency_window
-                    if recent_avg < prev_avg * degradation_threshold:
-                        print(f"Performance degradation detected! Loading previous best model...")
-                        self.load_model(f"{self.model_path[:-4]}_best.pth")
-                        self.entropy_coef *= 1.2  # Increase exploration after degradation
-                
-                if recent_avg > self.best_recent_avg:
-                    self.best_recent_avg = recent_avg
+                # Save model if we have a new best recent average
+                if recent_avg > best_recent_avg:
+                    best_recent_avg = recent_avg
                     print(f"New best recent average: {recent_avg:.2f} (consistency ratio: {consistency_ratio:.2f})")
+                    self.save_model(f"{self.model_path[:-4]}_best.pth")
+                    last_improvement_episode = episode
+                    consecutive_resets = 0  # Reset counter on improvement
+                    no_improvement_count = 0  # Reset no improvement counter
             
             if (ep_reward > max_reward):
                 max_reward = ep_reward
                 print(f"Max reward: {max_reward:.2f} at episode {episode + 1}")
-                # Save best model
-                if max_reward > best_reward:
-                    best_reward = max_reward
-                    self.save_model(f"{self.model_path[:-4]}_best.pth")
-                    no_improvement_count = 0
-            else:
-                no_improvement_count += 1
             
             # Update policy after each episode
             self.update_policy(rewards, log_probs)
             
-            # If no improvement for too long, increase exploration
-            if no_improvement_count > 200:
-                self.entropy_coef *= 1.1
+            # More balanced exploration strategy
+            if no_improvement_count > self.no_improvement_threshold:
+                self.entropy_coef = min(self.max_entropy, self.entropy_coef * self.exploration_boost)
                 no_improvement_count = 0
-                print("Increasing exploration due to no improvement")
+                print(f"Increasing exploration (entropy coef: {self.entropy_coef:.3f})")
+            
+            # Reset entropy coefficient if we've been stuck for too long
+            if episode - last_improvement_episode > 500:
+                consecutive_resets += 1
+                if consecutive_resets < 3:  # Limit number of resets
+                    self.entropy_coef = max(self.min_entropy, self.entropy_coef * 0.5)  # Gradual reduction
+                    print(f"Reducing exploration due to stagnation (entropy coef: {self.entropy_coef:.3f})")
+                    last_improvement_episode = episode
             
             if (episode + 1) % print_freq == 0:
                 avg_reward = total_reward / (episode + 1)
@@ -217,7 +220,7 @@ class REINFORCEAgent:
                 self.save_model(f"{self.model_path[:-4]}_ep{episode+1}.pth")
         
         print(f"Training completed. Avg reward: {total_reward/num_episodes:.2f}")
-        return rewards_history  # Return training history for plotting
+        return rewards_history
     
     def evaluate(self, env, num_episodes=10, top_k=5, video_dir="videos"):
         os.makedirs(video_dir, exist_ok=True)
