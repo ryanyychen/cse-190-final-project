@@ -2,3 +2,5 @@ venv/
 **/*.pyc
 /.DS_Store
 /videos
+/model
+/configs
