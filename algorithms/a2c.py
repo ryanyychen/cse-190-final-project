@@ -8,7 +8,9 @@ class ActorCritic(torch.nn.Module):
                 super().__init__()
                 self.shared = torch.nn.Sequential(
                     torch.nn.Linear(input_size, hidden_size),
-                    torch.nn.ReLU()
+                    torch.nn.Tanh(),
+                    torch.nn.Linear(hidden_size, hidden_size),
+                    torch.nn.Tanh()
                 )
                 self.actor = torch.nn.Linear(hidden_size, output_size * 2)
                 self.critic = torch.nn.Linear(hidden_size, 1)
