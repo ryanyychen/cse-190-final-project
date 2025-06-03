@@ -55,9 +55,12 @@ class IntersectionEnv(AbstractEnv):
                 "normalize_reward": False,
                 "offroad_terminal": False,
                 "safe_distance_reward": -4.0,  # Stronger penalty for unsafe distances
-                "route_reward": 2.0,  # Reward for following planned route
-                "progress_reward": 1.5,  # Reward for completing route segments
-                "speed_reward": 2.0,  # Increased weight for speed control
+                "route_reward": 2.5,  # Increased weight for route following
+                "progress_reward": 2.0,  # Increased weight for progress
+                "speed_reward": 1.5,  # Weight for speed control
+                "lane_following_reward": -2.0,  # Penalty for lane deviation
+                "turning_reward": 3.0,  # Strong reward for correct turning behavior
+                "consistency_reward": 1.0,  # Reduced weight for consistency to allow more exploration
             }
         )
         return config
@@ -106,6 +109,17 @@ class IntersectionEnv(AbstractEnv):
         safe_distance_reward = 0
         min_safe_distance = 15.0  # Increased minimum safe distance
         emergency_stop_distance = 8.0  # Distance at which we want to stop completely
+        
+        # Check if we're in an intersection
+        in_intersection = "ir" in vehicle.lane_index[0] if vehicle.lane else False
+        
+        # Count vehicles in intersection
+        vehicles_in_intersection = 0
+        for other_vehicle in self.road.vehicles:
+            if other_vehicle is not vehicle:
+                if other_vehicle.lane and "ir" in other_vehicle.lane_index[0]:
+                    vehicles_in_intersection += 1
+        
         for other_vehicle in self.road.vehicles:
             if other_vehicle is not vehicle:
                 distance = np.linalg.norm(vehicle.position - other_vehicle.position)
@@ -127,20 +141,44 @@ class IntersectionEnv(AbstractEnv):
                     if distance < emergency_stop_distance and vehicle.speed < 1.0:
                         safe_distance_reward += 1.0
         
-        # Route following reward based on destination
+        # Strong penalty for entering intersection when other vehicles are present
+        if in_intersection and vehicles_in_intersection > 0 and vehicle.speed > 2.0:
+            safe_distance_reward -= 3.0
+        
+        # Route following and turning reward based on destination
         route_reward = 0
+        turning_reward = 0
         if hasattr(self, 'destination'):
             current_lane = vehicle.lane
             if current_lane:
-                # Check if we're on a lane that leads to the destination
+                # Check if the current lane is the specific circular lane for a left turn (o1)
+                is_correct_left_turn_lane = (self.destination == "o1" and
+                                           isinstance(current_lane, CircularLane) and
+                                           current_lane.start == "ir3" and
+                                           current_lane.end == "il0")
+                
+                # Reward for being on the correct path to destination
                 if self.destination in current_lane.end:
-                    route_reward = 2.0  # Reward for being on the correct lane
+                    route_reward = 2.0  # Increased reward for being on correct lane
+                
+                # Additional rewards for being on the correct circular lane for a left turn
+                if is_correct_left_turn_lane:
+                    turning_reward += 4.0 # Strong reward for being on the specific left turn circular lane
+                    route_reward += 2.0 # Additional route reward for being on the left turn path
                 else:
-                    # Check if we're on a lane that connects to a lane leading to destination
+                     # Check if we're on a lane that connects to the destination
                     for lane in self.road.network.lanes:
-                        if (current_lane.end in lane.start and self.destination in lane.end):
-                            route_reward = 1.0  # Reward for being on a connecting lane
+                        if (current_lane.end in lane.start and self.destination in lane.end) or \
+                           (current_lane.start in lane.end and self.destination in lane.start):
+                            route_reward = max(route_reward, 1.0)  # Reward for being on a connecting lane
                             break
+        
+        # Lane following reward to prevent swerving
+        lane_following_reward = 0
+        if vehicle.lane:
+            # Calculate lateral deviation from lane center
+            lateral_deviation = abs(vehicle.lane.local_coordinates(vehicle.position)[1])
+            lane_following_reward = -lateral_deviation / vehicle.lane.width  # Negative reward for deviation
         
         # Progress reward based on distance to destination
         progress_reward = 0
@@ -157,6 +195,24 @@ class IntersectionEnv(AbstractEnv):
                 distance_to_goal = np.linalg.norm(vehicle.position - target_lane.end)
                 max_distance = 100  # Maximum possible distance
                 progress_reward = 1.0 - (distance_to_goal / max_distance)
+                
+                # Additional reward for making progress towards left turn goal on the circular lane
+                if self.destination == "o1":
+                     # Find the specific left turn circular lane
+                    left_turn_circular_lane = None
+                    for lane in self.road.network.lanes:
+                         if isinstance(lane, CircularLane) and lane.start == "ir3" and lane.end == "il0":
+                            left_turn_circular_lane = lane
+                            break
+
+                    if left_turn_circular_lane:
+                         # Calculate progress along this specific circular lane
+                         # This is a simplified approach based on distance to the end of the circular lane segment
+                         circular_lane_progress = 1.0 - (np.linalg.norm(vehicle.position - left_turn_circular_lane.end) / (np.linalg.norm(left_turn_circular_lane.start - left_turn_circular_lane.end) + 1e-6))
+                         # Reward progress only when on or past the start of the circular lane
+                         if np.dot(vehicle.position - left_turn_circular_lane.start, left_turn_circular_lane.direction(left_turn_circular_lane.start_longitudinal)) > -5.0:
+                              progress_reward += np.clip(circular_lane_progress, 0, 1) * 3.0 # Stronger additional reward for progress on circular lane
+
         
         # Speed reward based on situation
         speed_reward = 0
@@ -179,20 +235,37 @@ class IntersectionEnv(AbstractEnv):
                 speed_reward = -vehicle.speed / 10.0
             else:
                 # Normal speed control based on lane type
-                if "ir" in vehicle.lane_index[0]:  # Intersection lane
-                    speed_reward = np.clip(1.0 - abs(vehicle.speed - 5.0) / 5.0, 0, 1)
+                if in_intersection:
+                    # Very low speed in intersection
+                    speed_reward = np.clip(1.0 - abs(vehicle.speed - 3.0) / 3.0, 0, 1)
                 else:  # Approach or exit lane
                     speed_reward = np.clip(1.0 - abs(vehicle.speed - 8.0) / 8.0, 0, 1)
+        
+        # Consistency reward - reward for maintaining steady speed and position
+        consistency_reward = 0
+        if hasattr(vehicle, 'last_speed'):
+            speed_change = abs(vehicle.speed - vehicle.last_speed)
+            consistency_reward -= speed_change / 10.0  # Penalize sudden speed changes
+        if hasattr(vehicle, 'last_position'):
+            position_change = np.linalg.norm(vehicle.position - vehicle.last_position)
+            consistency_reward -= position_change / 20.0  # Penalize sudden position changes
+        
+        # Store current state for next step
+        vehicle.last_speed = vehicle.speed
+        vehicle.last_position = vehicle.position.copy()
         
         return {
             "collision_reward": vehicle.crashed,
             "high_speed_reward": np.clip(scaled_speed, 0, 1),
             "arrived_reward": self.has_arrived(vehicle),
             "on_road_reward": vehicle.on_road,
-            "safe_distance_reward": np.clip(safe_distance_reward, -3, 1),  # Increased range for stronger penalties
+            "safe_distance_reward": np.clip(safe_distance_reward, -3, 1),
             "route_reward": route_reward,
             "progress_reward": progress_reward,
-            "speed_reward": speed_reward
+            "speed_reward": speed_reward,
+            "lane_following_reward": lane_following_reward,
+            "turning_reward": turning_reward,
+            "consistency_reward": consistency_reward
         }
 
     def _is_terminated(self) -> bool:
