@@ -1,6 +1,8 @@
 appnope==0.1.4
 asttokens==3.0.0
 cloudpickle==3.1.1
+colorama==0.4.6
+colorama==0.4.6
 comm==0.2.2
 contourpy==1.3.2
 cycler==0.12.1
@@ -16,6 +18,8 @@ gym-notices==0.0.8
 gym-record==0.0.3
 gymnasium==1.1.1
 highway-env==1.10.1
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
 ipykernel==6.29.5
 ipython==9.2.0
 ipython_pygments_lexers==1.1.1
@@ -27,6 +31,7 @@ kiwisolver==1.4.8
 MarkupSafe==3.0.2
 matplotlib==3.10.3
 matplotlib-inline==0.1.7
+moviepy==2.2.1
 mpmath==1.3.0
 nest-asyncio==1.6.0
 networkx==3.4.2
@@ -38,6 +43,7 @@ parso==0.8.4
 pexpect==4.9.0
 pillow==11.2.1
 platformdirs==4.3.8
+proglog==0.1.12
 prompt_toolkit==3.0.51
 psutil==7.0.0
 ptyprocess==0.7.0
@@ -46,14 +52,19 @@ pygame==2.6.1
 Pygments==2.19.1
 pyparsing==3.2.3
 python-dateutil==2.9.0.post0
+python-dotenv==1.1.0
 pytz==2025.2
+pywin32==310
 PyYAML==6.0.2
 pyzmq==26.4.0
 scipy==1.15.3
+setuptools==80.9.0
 six==1.17.0
 stack-data==0.6.3
 sympy==1.14.0
-torch==2.7.0
+torch==2.7.0+cu128
+torchaudio==2.7.0+cu128
+torchvision==0.22.0+cu128
 tornado==6.5.1
 tqdm==4.67.1
 traitlets==5.14.3
