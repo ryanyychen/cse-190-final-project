@@ -3,7 +3,6 @@ import torch
 import cv2
 import numpy as np
 from tqdm import tqdm
-from gym_recorder import Recorder
 
 class REINFORCEAgent:
     def __init__(self, state_size, hidden_size, action_size, learning_rate=0.0001, gamma=0.99, model_path="models/reinforce.pth"):
