@@ -9,18 +9,11 @@ from highway_env.vehicle.controller import ControlledVehicle
 import numpy as np
 
 
-class CustomIntersectionEnv(IntersectionEnv):
+class SimpleIntersectionEnv(IntersectionEnv):
     def __init__(self, config=None, render_mode=None):
         super().__init__(config)
-        self.max_speed = 45         # Target max speed (for any speed‐related terms)
         self.render_mode = render_mode
-        self.safe_spacing = 15        # Threshold for rewarding good spacing
-        self.emergency_distance = 4.0
-        self._max_steps = 450
-        self.info = None
-
-        # Will hold the Euclidean distance to the goal from the previous step
-        self.prev_dist_to_goal = None
+        self._max_steps = 800
 
 
     def step(self, action):
@@ -31,75 +24,31 @@ class CustomIntersectionEnv(IntersectionEnv):
         3) Otherwise, compute our custom reward with _reward(action).
         """
         obs, _, done, truncated, self.info = super().step(action)
+        custom_reward = self._reward(action)
         self.steps += 1
+        
         if self.steps >= self._max_steps and not done:
             truncated = True
 
-        # Check for dangerous proximity to other vehicles
-        # for other_vehicle in self.road.vehicles:
-        #     if other_vehicle is not self.vehicle:
-        #         distance = np.linalg.norm(self.vehicle.position - other_vehicle.position)
-        #         if distance < self.emergency_distance:
-        #             reward = -20
-        #             self.info['dangerous_proximity'] = True
-        #             return obs, reward, done, truncated, self.info
-        
-        # Compute custom reward
-        custom_reward = self._reward(action)
         return obs, custom_reward, done, truncated, self.info
 
     def _reward(self, action):
         ego = self.vehicle
-        reward = 0.0
-
-        # 2) Destination bonus
-        if self._reached_destination():
-            self.info['arrived'] = True
-            return +20.0
-        
-        # 1) Crash or off‐road penalty
         if ego.crashed:
             self.info['crashed'] = True
-            if self.vehicle.speed == 0:
-                return 0
-            return -20.0
-        
+            return -10.0
         if ego.lane is None:
-            return -20.0
+            return -10.0
+        if self._reached_destination():
+            self.info['arrived'] = True
+            return +10.0
+        
+        return 0
 
-        # 3) Forward progress
-        dest = ego.destination
-        dist = np.linalg.norm(ego.position - dest)
-        # Use max_dist_to_goal (set in reset) to normalize
-        # reward += (1.0 / 100.0) * (self.max_dist_to_goal - dist)
-
-        # 4) Speed penalty if above max_speed
-        if ego.speed > self.max_speed:
-            reward -= 0.1 * (ego.speed - self.max_speed)
-
-        # 5) Spacing
-        min_dist = float("inf")
-        for other in self.road.vehicles:
-            if other is ego:
-                continue
-            d = np.linalg.norm(ego.position - other.position)
-            if d < min_dist:
-                min_dist = d
-
-        # if min_dist >= self.safe_spacing:
-        #     reward += 0.1
-        if min_dist <= self.safe_spacing and self.vehicle.speed < 2:
-            reward += 1
-        elif min_dist <= self.emergency_distance and self.vehicle.speed >= 2.5:
-            reward -= 1
-        # elif min_dist < self.emergency_distance:
-        #     reward -= 0.5
-
-        return reward
 
     def _is_terminated(self):
         return self.vehicle.crashed or self._reached_destination()
-
+    
     def _is_truncated(self):
         return self.steps >= 500
 
@@ -116,13 +65,6 @@ class CustomIntersectionEnv(IntersectionEnv):
         # 1) Call parent with the exact signature Gym expects:
         obs, info = super().reset(seed=seed, options=options)
         self.steps = 0
-        self.info = info
-
-        # 2) After resetting, compute the maximum distance to goal for normalization.
-        ego = self.vehicle
-        dx = ego.destination[0] - ego.position[0]
-        dy = ego.destination[1] - ego.position[1]
-        self.max_dist_to_goal = np.linalg.norm([dx, dy])
 
         # 3) Return exactly what super().reset returned
         return obs, info
