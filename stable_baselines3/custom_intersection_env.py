@@ -25,24 +25,27 @@ class CustomIntersectionEnv(IntersectionEnv):
 
     def step(self, action):
         """
-        1) Call parent class to advance the simulation.
-        2) Check for dangerously close vehicles (distance < min_safe_distance).
-            If so, assign a large negative reward and terminate immediately.
-        3) Otherwise, compute our custom reward with _reward(action).
+        Override reset so we can re‐initialize prev_dist_to_goal.
         """
-        obs, _, done, truncated, self.info = super().step(action)
-        self.steps += 1
-        if self.steps >= self._max_steps and not done:
-            truncated = True
+        obs, info = super().reset(**kwargs)
+        dest_pos = np.array(self.vehicle.destination)
+        ego_pos = np.array(self.vehicle.position)
+        self.prev_dist_to_goal = np.linalg.norm(dest_pos - ego_pos)
+        return obs, info
 
+    def step(self, action):
+        obs, reward, done, truncated, info = super().step(action)
+        
         # Check for dangerous proximity to other vehicles
-        # for other_vehicle in self.road.vehicles:
-        #     if other_vehicle is not self.vehicle:
-        #         distance = np.linalg.norm(self.vehicle.position - other_vehicle.position)
-        #         if distance < self.emergency_distance:
-        #             reward = -20
-        #             self.info['dangerous_proximity'] = True
-        #             return obs, reward, done, truncated, self.info
+        for other_vehicle in self.road.vehicles:
+            if other_vehicle is not self.vehicle:
+                distance = np.linalg.norm(self.vehicle.position - other_vehicle.position)
+                if distance < self.min_safe_distance:
+                    # Immediate termination with large negative reward
+                    reward = -50.0
+                    done = True
+                    info['dangerous_proximity'] = True
+                    return obs, reward, done, truncated, info
         
         # Compute custom reward
         custom_reward = self._reward(action)
