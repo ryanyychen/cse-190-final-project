@@ -31,17 +31,20 @@ class CustomIntersectionEnv(IntersectionEnv):
         return obs, info
 
     def step(self, action):
-        """
-        1) Call parent class to advance the simulation.
-        2) Check for dangerously close vehicles (distance < min_safe_distance).
-            If so, assign a large negative reward and terminate immediately.
-        3) Otherwise, compute our custom reward with _reward(action).
-        """
-        obs, _, done, truncated, info = super().step(action)
-
-        # Compute custom reward
-        custom_reward = self._reward(action)
-        return obs, custom_reward, done, truncated, info
+        obs, reward, done, truncated, info = super().step(action)
+        
+        # Check for dangerous proximity to other vehicles
+        for other_vehicle in self.road.vehicles:
+            if other_vehicle is not self.vehicle:
+                distance = np.linalg.norm(self.vehicle.position - other_vehicle.position)
+                if distance < self.min_safe_distance:
+                    # Immediate termination with large negative reward
+                    reward = -50.0
+                    done = True
+                    info['dangerous_proximity'] = True
+                    return obs, reward, done, truncated, info
+        
+        return obs, reward, done, truncated, info
 
     def _reward(self, action):
         """
