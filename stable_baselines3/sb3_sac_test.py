@@ -125,9 +125,10 @@ CONFIG = {
     "action": {
         "type": "ContinuousAction",
     },
+    "duration": 15,
     "simulation_frequency": 10,
     "policy_frequency": 10,
-    "destination": "o3",
+    "destination": "o1",
     "initial_vehicle_count": 20,
     "spawn_probability": 0.8,
     "ego_spacing": 25,
@@ -167,7 +168,7 @@ model = SAC(
     policy="MlpPolicy",
     env=env,
     learning_rate=3e-4,
-    buffer_size=1000,   # sufficiently large replay buffer
+    buffer_size=250,   # sufficiently large replay buffer
     batch_size=256,
     tau=0.005,
     gamma=0.99,
@@ -184,7 +185,7 @@ model = SAC(
 # ─────────────────────────────────────────────────────────────────────────────
 # Train for 100k timesteps (adjust as needed), tracking metrics
 model.learn(
-    total_timesteps=1000,
+    total_timesteps=5000,
     callback=[ProgressBarCallback(), metrics_callback],
 )
 

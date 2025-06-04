@@ -11,6 +11,8 @@ from stable_baselines3.common.monitor import Monitor
 
 # Import your custom environment
 from custom_intersection_env import CustomIntersectionEnv
+from simple_intersection_env import SimpleIntersectionEnv
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Create directories for model and plots
@@ -96,9 +98,10 @@ CONFIG = {
         "type": "ContinuousAction",
     },
     # ───────────────────────── Other settings ─────────────────────────
+    "duration": 2,
     "simulation_frequency": 10,
     "policy_frequency": 10,
-    "destination": "o3",
+    "destination": "o1",
     "initial_vehicle_count": 20,
     "spawn_probability": 0.8,
     "ego_spacing": 25,
@@ -116,13 +119,13 @@ CONFIG = {
 # ─────────────────────────────────────────────────────────────────────────────
 # Register your custom environment
 gym.envs.registration.register(
-    id="custom-intersection-v0",
-    entry_point="custom_intersection_env:CustomIntersectionEnv",
+    id="simple-intersection-v0",
+    entry_point="simple_intersection_env:SimpleIntersectionEnv",
 )
 
 # 1) Create the raw (unwrapped) env and wrap in Monitor (for ep_info_buffer)
 raw_env = gym.make(
-    "custom-intersection-v0", render_mode="rgb_array", config=CONFIG
+    "simple-intersection-v0", render_mode="rgb_array", config=CONFIG
 )
 monitored_env = Monitor(raw_env)
 
@@ -138,10 +141,10 @@ model = PPO(
     policy="MlpPolicy",
     env=env,
     learning_rate=3e-4,
-    n_steps=100,           # on‐policy rollout length
+    n_steps=1000,           # on‐policy rollout length
     batch_size=64,
     n_epochs=10,
-    gamma=0.99,
+    gamma=0.95,
     gae_lambda=0.95,
     clip_range=0.2,
     ent_coef=0.01,
@@ -150,7 +153,7 @@ model = PPO(
     use_sde=False,          # you can set True for state‐dependent noise
     sde_sample_freq=-1,
     tensorboard_log="./ppo_cont_tb/",
-    verbose=1,
+    verbose=0,
     device="cpu",
 )
 
@@ -171,7 +174,7 @@ env.close()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluation (human‐view rendering)
-eval_env = gym.make("custom-intersection-v0", render_mode="human", config=CONFIG)
+eval_env = gym.make("simple-intersection-v0", render_mode="human", config=CONFIG)
 model = PPO.load(os.path.join(model_dir, "ppo_continuous_intersection"))
 
 obs, _ = eval_env.reset()
@@ -185,7 +188,9 @@ for step in range(1000):
     time.sleep(0.05)
 
     if done or truncated:
-        print(f"Episode finished, total reward = {episode_reward}. Resetting…")
+        crashed = info.get("crashed", False)
+        arrived = info.get("arrived", False)
+        print(f"Episode finished, total reward = {episode_reward}. crashed: {crashed}, arrived: {arrived}. Resetting…")
         episode_reward = 0
         obs, _ = eval_env.reset()
         time.sleep(1)

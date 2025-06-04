@@ -12,23 +12,16 @@ import numpy as np
 class CustomIntersectionEnv(IntersectionEnv):
     def __init__(self, config=None, render_mode=None):
         super().__init__(config)
-        self.max_speed = 35         # Target max speed (for any speed‐related terms)
+        self.max_speed = 45         # Target max speed (for any speed‐related terms)
         self.render_mode = render_mode
-        self.safe_spacing = 5.0        # Threshold for rewarding good spacing
-        self.emergency_distance = 2.0
+        self.safe_spacing = 15        # Threshold for rewarding good spacing
+        self.emergency_distance = 4.0
+        self._max_steps = 450
+        self.info = None
 
         # Will hold the Euclidean distance to the goal from the previous step
         self.prev_dist_to_goal = None
 
-    def reset(self, **kwargs):
-        """
-        Override reset so we can re‐initialize prev_dist_to_goal.
-        """
-        obs, info = super().reset(**kwargs)
-        dest_pos = np.array(self.vehicle.destination)
-        ego_pos = np.array(self.vehicle.position)
-        self.prev_dist_to_goal = np.linalg.norm(dest_pos - ego_pos)
-        return obs, info
 
     def step(self, action):
         """
@@ -37,111 +30,102 @@ class CustomIntersectionEnv(IntersectionEnv):
             If so, assign a large negative reward and terminate immediately.
         3) Otherwise, compute our custom reward with _reward(action).
         """
-        obs, _, done, truncated, info = super().step(action)
+        obs, _, done, truncated, self.info = super().step(action)
+        self.steps += 1
+        if self.steps >= self._max_steps and not done:
+            truncated = True
 
+        # Check for dangerous proximity to other vehicles
+        # for other_vehicle in self.road.vehicles:
+        #     if other_vehicle is not self.vehicle:
+        #         distance = np.linalg.norm(self.vehicle.position - other_vehicle.position)
+        #         if distance < self.emergency_distance:
+        #             reward = -20
+        #             self.info['dangerous_proximity'] = True
+        #             return obs, reward, done, truncated, self.info
+        
         # Compute custom reward
         custom_reward = self._reward(action)
-        return obs, custom_reward, done, truncated, info
+        return obs, custom_reward, done, truncated, self.info
 
     def _reward(self, action):
-        """
-        Custom reward function that:
-         1) Penalizes crashing
-         2) Penalizes going off‐road
-         3) Rewards reaching the destination
-         4) Rewards forward progress (Δ distance to goal)
-         5) Rewards staying on the planned route (small bonus/penalty)
-         6) Penalty for exceeding max speed
-         7) Penalty for negative acceleration (accelerating backwards)
-         8) Penalty for negative velocity (going in reverse)
-         9) Positive reward for maintaining forward speed
-        10) Positive reward for keeping safe spacing from other vehicles
-        """
-        reward = 0.0
         ego = self.vehicle
+        reward = 0.0
 
-        # 1) Crash penalty
-        if ego.crashed:
-            reward -= 50
-
-        # 2) Off‐road penalty (ego.lane is None when off any valid lane)
-        if ego.lane is None:
-            reward -= 5
-
-        # 3) Reward for successfully reaching destination
+        # 2) Destination bonus
         if self._reached_destination():
-            reward += 50.0
+            self.info['arrived'] = True
+            return +20.0
+        
+        # 1) Crash or off‐road penalty
+        if ego.crashed:
+            self.info['crashed'] = True
+            if self.vehicle.speed == 0:
+                return 0
+            return -20.0
+        
+        if ego.lane is None:
+            return -20.0
 
-        # 5) Route‐following reward or small penalty
-        on_route_bonus = 0.0
-        try:
-            planned_route = ego.route  # deque of (node_id, lane_id, offset)
-            current_lane_id = (
-                ego.lane_index[1] if ego.lane_index and len(ego.lane_index) > 1 else None
-            )
-            route_lane_ids = [step[1] for step in planned_route]
-            if current_lane_id in route_lane_ids:
-                on_route_bonus = 0.1
-            else:
-                on_route_bonus = -0.5
-        except Exception:
-            on_route_bonus = 0.0
-        reward += on_route_bonus
+        # 3) Forward progress
+        dest = ego.destination
+        dist = np.linalg.norm(ego.position - dest)
+        # Use max_dist_to_goal (set in reset) to normalize
+        # reward += (1.0 / 100.0) * (self.max_dist_to_goal - dist)
 
-        # 6) Penalty for exceeding max speed
+        # 4) Speed penalty if above max_speed
         if ego.speed > self.max_speed:
-            speed_excess = ego.speed - self.max_speed
-            reward -= 1.0 * speed_excess
+            reward -= 0.1 * (ego.speed - self.max_speed)
 
-        # 10) Positive reward for keeping safe spacing from other vehicles
-        #     Compute minimum distance to any other vehicle
+        # 5) Spacing
         min_dist = float("inf")
         for other in self.road.vehicles:
-            if other is not ego:
-                dist_i = np.linalg.norm(ego.position - other.position)
-                if dist_i < min_dist:
-                    min_dist = dist_i
+            if other is ego:
+                continue
+            d = np.linalg.norm(ego.position - other.position)
+            if d < min_dist:
+                min_dist = d
 
-        # If the minimum distance is above the safe_spacing threshold, give a bonus
-        if min_dist > self.safe_spacing:
-            spacing_bonus = 1.0 * (min_dist / self.safe_spacing)
-            reward += spacing_bonus
-
-        # EMERGENCY‐STOP bonus: if min_dist < emergency_distance, reward speed ≈ 0
-        if min_dist < self.emergency_distance:
-            # if ego is almost stopped, give a high bonus
-            if abs(ego.speed) < 0.1:
-                reward += 2
-            else:
-                # if ego still moving when extremely close, stronger penalty
-                reward -= 2 * (abs(ego.speed) / self.max_speed)
+        # if min_dist >= self.safe_spacing:
+        #     reward += 0.1
+        if min_dist <= self.safe_spacing and self.vehicle.speed < 2:
+            reward += 1
+        elif min_dist <= self.emergency_distance and self.vehicle.speed >= 2.5:
+            reward -= 1
+        # elif min_dist < self.emergency_distance:
+        #     reward -= 0.5
 
         return reward
 
     def _is_terminated(self):
-        """
-        End the episode if ego crashed or reached destination.
-        (Dangerous proximity already handled in step().)
-        """
         return self.vehicle.crashed or self._reached_destination()
 
     def _is_truncated(self):
-        """
-        Cap the episode length at 500 steps.
-        """
         return self.steps >= 500
 
     def _reached_destination(self):
-        """
-        Return True if ego is within a small threshold of its destination.
-        """
         dest_x, dest_y = self.vehicle.destination
-        threshold = 5.0  # meters
-        vehicle_x, vehicle_y = self.vehicle.position
-        return (
-            abs(dest_x - vehicle_x) < threshold
-            and abs(dest_y - vehicle_y) < threshold
-        )
+        x, y = self.vehicle.position
+        return abs(dest_x - x) < 5.0 and abs(dest_y - y) < 5.0
+
+    def reset(self, *, seed=None, options=None):
+        """
+        Override reset to accept (seed, options) keywords, 
+        call the parent reset, then compute max_dist_to_goal.
+        """
+        # 1) Call parent with the exact signature Gym expects:
+        obs, info = super().reset(seed=seed, options=options)
+        self.steps = 0
+        self.info = info
+
+        # 2) After resetting, compute the maximum distance to goal for normalization.
+        ego = self.vehicle
+        dx = ego.destination[0] - ego.position[0]
+        dy = ego.destination[1] - ego.position[1]
+        self.max_dist_to_goal = np.linalg.norm([dx, dy])
+
+        # 3) Return exactly what super().reset returned
+        return obs, info
 
     def _make_vehicles(self, n_vehicles: int = 10) -> None:
         """
