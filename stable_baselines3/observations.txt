@@ -1,0 +1,12 @@
+100,000 iterations:
+simple model does worse than complex model for evaluations
+- simple: Total collisions: 39 out of 100 episodes; Total destination arrivals: 57 out of 100 episodes
+Total collisions: 43 out of 100 episodes
+Total destination arrivals: 55 out of 100 episodes
+
+= complex: Total collisions: 50 out of 100 episodes; Total destination arrivals: 48 out of 100 episodes
+Total collisions: 52 out of 100 episodes
+Total destination arrivals: 48 out of 100 episodes
+
+simple model does visually better than complex model for loss/stats
+

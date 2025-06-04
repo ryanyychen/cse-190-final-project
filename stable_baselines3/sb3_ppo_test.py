@@ -179,7 +179,8 @@ model = PPO.load(os.path.join(model_dir, "ppo_continuous_intersection"))
 
 obs, _ = eval_env.reset()
 episode_reward = 0
-
+num_arrived = 0
+num_crashed = 0
 for step in range(1000):
     action, _ = model.predict(obs, deterministic=True)
     obs, reward, done, truncated, info = eval_env.step(action)
@@ -189,10 +190,12 @@ for step in range(1000):
 
     if done or truncated:
         crashed = info.get("crashed", False)
+        num_crashed += crashed
         arrived = info.get("arrived", False)
+        num_arrived += arrived
         print(f"Episode finished, total reward = {episode_reward}. crashed: {crashed}, arrived: {arrived}. Resetting…")
         episode_reward = 0
         obs, _ = eval_env.reset()
         time.sleep(1)
-
+print(crashed, arrived)
 eval_env.close()

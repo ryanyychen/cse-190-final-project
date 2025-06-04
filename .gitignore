@@ -4,3 +4,5 @@ venv/
 /videos
 /model
 /configs
+/stable_baselines3/ppo_tensorboard
+/stable_baselines3/__pycache__
