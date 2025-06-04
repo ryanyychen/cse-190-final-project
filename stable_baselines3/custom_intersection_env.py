@@ -32,12 +32,14 @@ class CustomIntersectionEnv(IntersectionEnv):
 
     def step(self, action):
         obs, reward, done, truncated, info = super().step(action)
+
+        info['arrived'] = self._reached_destination()
         
         # Check for dangerous proximity to other vehicles
         for other_vehicle in self.road.vehicles:
             if other_vehicle is not self.vehicle:
                 distance = np.linalg.norm(self.vehicle.position - other_vehicle.position)
-                if distance < self.min_safe_distance:
+                if distance < self.emergency_distance:
                     # Immediate termination with large negative reward
                     reward = -50.0
                     done = True
