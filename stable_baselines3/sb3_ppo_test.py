@@ -1,29 +1,101 @@
+import os
+import time
+import numpy as np
+import matplotlib.pyplot as plt
 import gymnasium as gym
+
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import ProgressBarCallback
+from stable_baselines3.common.callbacks import ProgressBarCallback, BaseCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.monitor import Monitor
+
 # Import your custom environment
 from custom_intersection_env import CustomIntersectionEnv
-import time
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Create directories for model and plots
+model_dir = "./stable_baselines3/ppo_cont/model/"
+plots_dir = "./stable_baselines3/ppo_cont/plots/"
+os.makedirs(model_dir, exist_ok=True)
+os.makedirs(plots_dir, exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom callback to track episode rewards & lengths
+class MetricsCallback(BaseCallback):
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.rewards = []
+        self.episode_lengths = []
+        self.last_ep_count = 0
+
+    def _on_step(self) -> bool:
+        # Check for newly finished episodes in ep_info_buffer
+        epi_buffer = self.model.ep_info_buffer
+        if len(epi_buffer) > self.last_ep_count:
+            for idx in range(self.last_ep_count, len(epi_buffer)):
+                ep_info = epi_buffer[idx]
+                if ep_info is not None:
+                    self.rewards.append(ep_info["r"])
+                    self.episode_lengths.append(ep_info["l"])
+            self.last_ep_count = len(epi_buffer)
+        return True
+
+    def plot_metrics(self):
+        # Rewards per episode (scatter + line)
+        if len(self.rewards) > 0:
+            x = list(range(len(self.rewards)))
+            y = self.rewards
+            plt.figure(figsize=(8, 4))
+            plt.scatter(x, y, s=10, alpha=0.5, color="tab:blue", label="Episode Reward")
+            plt.plot(x, y, color="tab:blue", alpha=0.7, linewidth=1.0)
+            plt.title("PPO‐Continuous: Episode Rewards")
+            plt.xlabel("Episode")
+            plt.ylabel("Total Reward")
+            plt.grid(True, linestyle="--", alpha=0.7)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(plots_dir, "rewards.png"))
+            plt.close()
+
+        # Episode lengths (scatter + line)
+        if len(self.episode_lengths) > 0:
+            x = list(range(len(self.episode_lengths)))
+            y = self.episode_lengths
+            plt.figure(figsize=(8, 4))
+            plt.scatter(x, y, s=10, alpha=0.5, color="tab:green", label="Episode Length")
+            plt.plot(x, y, color="tab:green", alpha=0.7, linewidth=1.0)
+            plt.title("PPO‐Continuous: Episode Lengths")
+            plt.xlabel("Episode")
+            plt.ylabel("Length (# steps)")
+            plt.grid(True, linestyle="--", alpha=0.7)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(plots_dir, "episode_lengths.png"))
+            plt.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 CONFIG = {
     "observation": {
         "type": "Kinematics",
-        "vehicles_count": 15,  # Number of other vehicles to observe
-        "features": ["presence", "x", "y", "vx", "vy"],  # Observe position and velocity
+        "vehicles_count": 15,
+        "features": ["presence", "x", "y", "vx", "vy"],
         "features_range": {
             "x": [-100, 100],
             "y": [-100, 100],
             "vx": [-10, 10],
-            "vy": [-10, 10]
+            "vy": [-10, 10],
         },
         "absolute": False,
         "clip": False,
-        "normalize": False
+        "normalize": False,
     },
+    # ─────────────── Switch to continuous actions ───────────────
     "action": {
-        "type": "DiscreteMetaAction",  # Keep simple, 5 discrete actions
+        "type": "ContinuousAction",
     },
+    # ───────────────────────── Other settings ─────────────────────────
     "simulation_frequency": 10,
     "policy_frequency": 10,
     "destination": "o3",
@@ -32,74 +104,90 @@ CONFIG = {
     "ego_spacing": 25,
     "initial_lane_id": None,
     "controlled_vehicles": 1,
-    "duration": 15,  # seconds
+    "duration": 15,
     "vehicles_density": 1.0,
     "screen_width": 600,
     "screen_height": 600,
     "centering_position": [0.5, 0.6],
     "scaling": 5.5 * 1.3,
-    "normalize_reward": False
+    "normalize_reward": False,
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
 # Register your custom environment
 gym.envs.registration.register(
-    id='custom-intersection-v0',
-    entry_point='custom_intersection_env:CustomIntersectionEnv',
+    id="custom-intersection-v0",
+    entry_point="custom_intersection_env:CustomIntersectionEnv",
 )
 
-# Create and wrap the environment
-env = gym.make("custom-intersection-v0", render_mode='rgb_array', config=CONFIG)
-env = DummyVecEnv([lambda: env])
+# 1) Create the raw (unwrapped) env and wrap in Monitor (for ep_info_buffer)
+raw_env = gym.make(
+    "custom-intersection-v0", render_mode="rgb_array", config=CONFIG
+)
+monitored_env = Monitor(raw_env)
 
-# Configure PPO with better parameters
+# 2) Vectorize
+env = DummyVecEnv([lambda: monitored_env])
+
+# 3) Create metrics callback
+metrics_callback = MetricsCallback()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Configure PPO for ContinuousAction
 model = PPO(
-    "MlpPolicy",
-    env,
-    n_steps=2048,  # Increased batch size
+    policy="MlpPolicy",
+    env=env,
+    learning_rate=3e-4,
+    n_steps=100,           # on‐policy rollout length
     batch_size=64,
-    n_epochs=10,  # Number of epochs when optimizing the surrogate loss
-    learning_rate=3e-4,  # Learning rate
-    gamma=0.99,  # Discount factor
-    gae_lambda=0.95,  # Factor for trade-off of bias vs variance for GAE
-    clip_range=0.2,  # Clipping parameter for PPO
-    clip_range_vf=None,  # Clipping parameter for value function
-    normalize_advantage=True,
-    ent_coef=0.01,  # Entropy coefficient for exploration
-    vf_coef=0.5,  # Value function coefficient
-    max_grad_norm=0.5,  # Maximum norm for gradient clipping
-    use_sde=False,
+    n_epochs=10,
+    gamma=0.99,
+    gae_lambda=0.95,
+    clip_range=0.2,
+    ent_coef=0.01,
+    vf_coef=0.5,
+    max_grad_norm=0.5,
+    use_sde=False,          # you can set True for state‐dependent noise
     sde_sample_freq=-1,
-    target_kl=None,
-    tensorboard_log="./stable_baselines3/ppo/ppo_intersection_tensorboard/",
-    verbose=0,
-    device='cpu'
+    tensorboard_log="./ppo_cont_tb/",
+    verbose=1,
+    device="cpu",
 )
 
-# Train for longer
+# ─────────────────────────────────────────────────────────────────────────────
+# Train for 100k timesteps, tracking episode‐level metrics
 model.learn(
-    total_timesteps=1000,  # Much longer training
-    callback=ProgressBarCallback()
+    total_timesteps=5000,
+    callback=[ProgressBarCallback(), metrics_callback],
 )
-model.save("./stable_baselines3/ppo/ppo_custom_intersection")
+
+# Save plots after training
+metrics_callback.plot_metrics()
+
+# Save the trained model
+model.save(os.path.join(model_dir, "ppo_continuous_intersection"))
 
 env.close()
 
-# Evaluation
-env = gym.make("custom-intersection-v0", render_mode='human', config=CONFIG)
-model = PPO.load("./stable_baselines3/ppo/ppo_custom_intersection")
+# ─────────────────────────────────────────────────────────────────────────────
+# Evaluation (human‐view rendering)
+eval_env = gym.make("custom-intersection-v0", render_mode="human", config=CONFIG)
+model = PPO.load(os.path.join(model_dir, "ppo_continuous_intersection"))
 
-obs, _ = env.reset()
+obs, _ = eval_env.reset()
 episode_reward = 0
 
 for step in range(1000):
-    action, _states = model.predict(obs, deterministic=True)
-    obs, reward, done, truncated, info = env.step(action)
+    action, _ = model.predict(obs, deterministic=True)
+    obs, reward, done, truncated, info = eval_env.step(action)
     episode_reward += reward
-    env.render()
+    eval_env.render()
     time.sleep(0.05)
 
     if done or truncated:
-        print(f"Episode finished, total reward of {episode_reward}, resetting...")
+        print(f"Episode finished, total reward = {episode_reward}. Resetting…")
         episode_reward = 0
-        obs, _ = env.reset()
+        obs, _ = eval_env.reset()
         time.sleep(1)
+
+eval_env.close()
