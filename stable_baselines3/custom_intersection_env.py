@@ -18,6 +18,9 @@ class CustomIntersectionEnv(IntersectionEnv):
         
     def step(self, action):
         obs, reward, done, truncated, info = super().step(action)
+
+        # Set info to include whether vehicle has arrived
+        info['arrived'] = self._reached_destination()
         
         # Check for dangerous proximity to other vehicles
         for other_vehicle in self.road.vehicles:
@@ -29,7 +32,6 @@ class CustomIntersectionEnv(IntersectionEnv):
                     done = True
                     info['dangerous_proximity'] = True
                     return obs, reward, done, truncated, info
-        
         return obs, reward, done, truncated, info
 
     def _reward(self, action):
