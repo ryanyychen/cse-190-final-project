@@ -76,7 +76,7 @@ class CustomIntersectionEnv(IntersectionEnv):
         # 4) Speed penalty if above max_speed
         if ego.speed > self.max_speed:
             reward -= 0.1 * (ego.speed - self.max_speed)
-
+            
         # 5) Spacing
         min_dist = float("inf")
         for other in self.road.vehicles:
