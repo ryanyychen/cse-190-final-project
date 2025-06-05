@@ -3,6 +3,7 @@ import torch
 import cv2
 import numpy as np
 from tqdm import tqdm
+from fvcore.nn import FlopCountAnalysis
 
 class REINFORCEAgent:
     def __init__(self, state_size, hidden_size, action_size, learning_rate=0.0001, gamma=0.99, model_path="models/reinforce.pth"):
@@ -226,6 +227,11 @@ class REINFORCEAgent:
         all_episodes = []
         episode_frames = {}  # Store frames for each episode
 
+        dummy_input = torch.randn(1, self.state_size)
+
+        flops = FlopCountAnalysis(self.policy, dummy_input)
+        print(f"Model FLOPs: {flops.total()}")
+
         try:
             # First run to collect rewards and frames
             for episode in tqdm(range(num_episodes), desc="Evaluating REINFORCE Agent"):
@@ -327,7 +333,7 @@ class REINFORCEAgent:
     
     def load_model(self, model_path="models/reinforce.pth"):
         if os.path.exists(model_path):
-            checkpoint = torch.load(model_path)
+            checkpoint = torch.load(model_path, map_location=self.device)
             self.policy.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             self.entropy_coef = checkpoint.get('entropy_coef', 0.05)
